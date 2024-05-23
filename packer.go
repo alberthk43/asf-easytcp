@@ -3,8 +3,9 @@ package easytcp
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/spf13/cast"
 	"io"
+
+	"github.com/spf13/cast"
 )
 
 //go:generate mockgen -destination ./packer_mock.go -package easytcp . Packer
@@ -39,6 +40,7 @@ func NewDefaultPacker() *DefaultPacker {
 // | `id`       | uint32 | 4       |                         |
 // | `data`     | []byte | dynamic |                         |
 // .
+// DefaultPacker 按照逻辑不应该在这里出现, 或者说不应该有defaultPacker存在, 这个是一个业务需要自己实现的东西, 测试仅仅需要mock这个接口即可
 type DefaultPacker struct {
 	// MaxDataSize represents the max size of `data`
 	MaxDataSize int

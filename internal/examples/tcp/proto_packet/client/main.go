@@ -1,12 +1,13 @@
 package main
 
 import (
+	"net"
+	"time"
+
 	"github.com/DarthPestilane/easytcp"
 	"github.com/DarthPestilane/easytcp/internal/examples/fixture"
 	"github.com/DarthPestilane/easytcp/internal/examples/tcp/proto_packet/common"
 	"github.com/sirupsen/logrus"
-	"net"
-	"time"
 )
 
 var log *logrus.Logger
@@ -32,6 +33,11 @@ func main() {
 				Bar: "bar",
 				Buz: 22,
 			}
+
+			// codec 用于对于proto进行编码, 但是没有tcp真正的消息封装的概念
+			// packer 用于封装tcp的消息, 但是不关心打包的 bytes 是什么
+			// codec 更贴近业务层
+
 			data, err := codec.Encode(req)
 			if err != nil {
 				panic(err)

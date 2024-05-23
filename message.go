@@ -14,6 +14,7 @@ func NewMessage(id interface{}, data []byte) *Message {
 }
 
 // Message is the abstract of inbound and outbound message.
+// 是业务层关心的数据结构, 用于传递消息
 type Message struct {
 	id      interface{}
 	data    []byte

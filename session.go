@@ -2,11 +2,12 @@ package easytcp
 
 import (
 	"fmt"
-	"github.com/google/uuid"
 	"io"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Session represents a TCP session.
@@ -39,6 +40,7 @@ type Session interface {
 	AfterCloseHook() <-chan struct{}
 }
 
+// 对于连接的封装, 包含了实际的conn以及一些额外的信息
 type session struct {
 	id               interface{}   // session's ID.
 	conn             net.Conn      // tcp connection
@@ -95,16 +97,17 @@ func (s *session) SetID(id interface{}) {
 // Returns false if session is closed or ctx is done.
 func (s *session) Send(ctx Context) (ok bool) {
 	select {
-	case <-ctx.Done():
+	case <-ctx.Done(): // 要正确处理ctx的关闭的case
 		return false
 	case <-s.closedC:
 		return false
-	case s.respStream <- ctx:
+	case s.respStream <- ctx: // 数据返回给客户端
 		return true
 	}
 }
 
 // Codec implements Session Codec.
+// 相当于业务没有实际的调用的方式, 仅仅是"存储了"一个Codec, 可以在需要的时候给出来
 func (s *session) Codec() Codec {
 	return s.codec
 }
@@ -112,7 +115,7 @@ func (s *session) Codec() Codec {
 // Close closes the session, but doesn't close the connection.
 // The connection will be closed in the server once the session's closed.
 func (s *session) Close() {
-	s.closeOnce.Do(func() { close(s.closedC) })
+	s.closeOnce.Do(func() { close(s.closedC) }) // 用于确保只close一次, 其实只是关闭了一个channel, 给出了关闭的信号, 不是实际close conn
 }
 
 // AfterCreateHook blocks until session's on-create hook triggered.
@@ -127,9 +130,9 @@ func (s *session) AfterCloseHook() <-chan struct{} {
 
 // AllocateContext gets a Context from pool and reset all but session.
 func (s *session) AllocateContext() Context {
-	c := s.ctxPool.Get().(*routeContext)
-	c.reset()
-	c.SetSession(s)
+	c := s.ctxPool.Get().(*routeContext) // 使用了对象池创建了一个Context的实例
+	c.reset()                            // 防止对象池拿出来的Context有脏数据
+	c.SetSession(s)                      // 设置session到Context中
 	return c
 }
 
@@ -141,33 +144,42 @@ func (s *session) Conn() net.Conn {
 // readInbound reads message packet from connection in a loop.
 // And send unpacked message to reqQueue, which will be consumed in router.
 // The loop breaks if errors occurred or the session is closed.
+// 是一个协程, 用于读取连接中的数据
+// Router表示了协议的处理逻辑, 是应用层的逻辑
 func (s *session) readInbound(router *Router, timeout time.Duration) {
 	for {
+		// 如果session关闭了, 则退出, default case是为了避免阻塞
 		select {
-		case <-s.closedC:
+		case <-s.closedC: // 当read或者write的loop结束, 就会设置这个信号, 下次另外的一个循环就会退出
 			return
 		default:
 		}
+
+		// 如果有超时, 则设置超时时间
 		if timeout > 0 {
 			if err := s.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 				_log.Errorf("session %s set read deadline err: %s", s.id, err)
 				break
 			}
 		}
+
+		// s.pack是一个interface, 用于用户自定义的协议, 用于解析数据包
+		// 这里的Unpack是否可以设计为异步的? 因为可能unpack会有较高的CPU消耗, 不要卡主网络读取是否更好?
 		reqMsg, err := s.packer.Unpack(s.conn)
 		if err != nil {
 			logMsg := fmt.Sprintf("session %s unpack inbound packet err: %s", s.id, err)
-			if err == io.EOF {
+			if err == io.EOF { // 因为是直接从conn读取数据, 所以EOF表示连接关闭, 是正常的情况
 				_log.Tracef(logMsg)
 			} else {
 				_log.Errorf(logMsg)
 			}
-			break
+			break // 如果解析失败, 则退出, 会关闭session, 在函数的最后进行了 s.Close() 操作
 		}
-		if reqMsg == nil {
+		if reqMsg == nil { // 容错的处理
 			continue
 		}
 
+		// 处理数据包, 如果是异步的, 则开启一个协程处理, 否则直接处理
 		if s.asyncRouter {
 			go s.handleReq(router, reqMsg)
 		} else {
@@ -179,9 +191,9 @@ func (s *session) readInbound(router *Router, timeout time.Duration) {
 }
 
 func (s *session) handleReq(router *Router, reqMsg *Message) {
-	ctx := s.AllocateContext().SetRequestMessage(reqMsg)
+	ctx := s.AllocateContext().SetRequestMessage(reqMsg) // 上面会默认设置 session自身, 这里又设置了reqMsg
 	router.handleRequest(ctx)
-	s.Send(ctx)
+	s.Send(ctx) // ctx包含了处理的结果
 }
 
 // writeOutbound fetches message from respStream channel and writes to TCP connection in a loop.
@@ -191,9 +203,9 @@ func (s *session) writeOutbound(writeTimeout time.Duration) {
 	for {
 		var ctx Context
 		select {
-		case <-s.closedC:
+		case <-s.closedC: // close关闭了这个chan, 下次另外一个read/write的loop就会关闭退出
 			return
-		case ctx = <-s.respStream:
+		case ctx = <-s.respStream: // 需要返回给客户端的ctx, 继续执行下面的发送逻辑
 		}
 
 		outboundBytes, err := s.packResponse(ctx)
@@ -205,7 +217,7 @@ func (s *session) writeOutbound(writeTimeout time.Duration) {
 			continue
 		}
 
-		if writeTimeout > 0 {
+		if writeTimeout > 0 { // 每次发送数据前, 都设置超时时间, 注意这个用法不是初始化设置一次就行的
 			if err := s.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 				_log.Errorf("session %s set write deadline err: %s", s.id, err)
 				break
@@ -222,7 +234,7 @@ func (s *session) writeOutbound(writeTimeout time.Duration) {
 }
 
 func (s *session) packResponse(ctx Context) ([]byte, error) {
-	defer s.ctxPool.Put(ctx)
+	defer s.ctxPool.Put(ctx) // ctx的生命周期在这里结束, 放回对象池
 	if ctx.Response() == nil {
 		return nil, nil
 	}

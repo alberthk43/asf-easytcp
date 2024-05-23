@@ -2,14 +2,15 @@ package easytcp
 
 import (
 	"fmt"
-	"github.com/olekukonko/tablewriter"
-	"github.com/spf13/cast"
 	"io"
 	"os"
 	"reflect"
 	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/olekukonko/tablewriter"
+	"github.com/spf13/cast"
 )
 
 func newRouter() *Router {
@@ -54,17 +55,17 @@ var nilHandler HandlerFunc = func(ctx Context) {}
 
 // handleRequest walks ctx through middlewares and handler,
 // and returns response message.
-func (r *Router) handleRequest(ctx Context) {
-	reqMsg := ctx.Request()
+func (r *Router) handleRequest(ctx Context) { // Context的使用方式与http类似, 但是这个Context是自定义的封装的interface, 使用了routeCtx具体实现
+	reqMsg := ctx.Request() // 获取请求消息reqMsg
 	if reqMsg == nil {
 		return
 	}
-	var handler HandlerFunc
+	var handler HandlerFunc // 消息处理函数
 	if v, has := r.handlerMapper[reqMsg.ID()]; has {
 		handler = v
 	}
 
-	var mws = r.globalMiddlewares
+	var mws = r.globalMiddlewares // 全局的中间件, 以及消息对应的中间件
 	if v, has := r.middlewaresMapper[reqMsg.ID()]; has {
 		mws = append(mws, v...) // append to global ones
 	}
@@ -80,12 +81,15 @@ func (r *Router) handleRequest(ctx Context) {
 // Makes something like:
 //
 //	var wrapped HandlerFunc = m1(m2(m3(handle)))
+//
+// HandlerFunc 是最内层的处理ctx的函数
+// MiddlewareFunc 是后向前的中间件, 可以套娃, 最终加工的是HandlerFunc
 func (r *Router) wrapHandlers(handler HandlerFunc, middles []MiddlewareFunc) (wrapped HandlerFunc) {
 	if handler == nil {
-		handler = r.notFoundHandler
+		handler = r.notFoundHandler // not found handler, 可以有一个默认的处理函数
 	}
-	if handler == nil {
-		handler = nilHandler
+	if handler == nil { // 比如 notFoundHandler 也没有设置, 那么就设置为nilHandler
+		handler = nilHandler // null模式, 什么都不做
 	}
 	wrapped = handler
 	for i := len(middles) - 1; i >= 0; i-- {

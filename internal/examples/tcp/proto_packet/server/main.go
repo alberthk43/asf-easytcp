@@ -28,6 +28,7 @@ func main() {
 	}
 }
 
+// 是 easytcp.HandlerFunc 的实现
 func handle(c easytcp.Context) {
 	var reqData common.FooReq
 	_ = c.Bind(&reqData)
@@ -40,6 +41,7 @@ func handle(c easytcp.Context) {
 	}
 }
 
+// 是 easytcp.MiddlewareFunc 的实现
 func logTransmission(req, resp proto.Message) easytcp.MiddlewareFunc {
 	return func(next easytcp.HandlerFunc) easytcp.HandlerFunc {
 		return func(c easytcp.Context) {
@@ -53,7 +55,7 @@ func logTransmission(req, resp proto.Message) easytcp.MiddlewareFunc {
 					log.Infof("send | id: %d; size: %d; data: %s", respMsg.ID(), len(respMsg.Data()), resp)
 				}
 			}()
-			next(c)
+			next(c) // 其实就是 handle 这个函数执行了
 		}
 	}
 }

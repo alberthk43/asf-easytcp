@@ -147,40 +147,45 @@ func (s *Server) acceptLoop() error {
 		}
 		if s.socketSendDelay {
 			if c, ok := conn.(*net.TCPConn); ok {
-				if err := c.SetNoDelay(false); err != nil {
+				if err := c.SetNoDelay(false); err != nil { // 发送延迟需要 TCPConn.SetNoDelay(bool) 控制, 默认不启用Nagel算法
 					return fmt.Errorf("conn set no delay err: %s", err)
 				}
 			}
 		}
-		go s.handleConn(conn)
+		go s.handleConn(conn) // 开启一个协程处理连接
 	}
 }
 
 // handleConn creates a new session with `conn`,
 // handles the message through the session in different goroutines,
 // and waits until the session's closed, then close the `conn`.
+// 是一个协程, 用于处理连接
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close() // nolint
 
+	// Server的Packer, Codec, respQueueSize, asyncRouter 会透传给 Session
 	sess := newSession(conn, &sessionOption{
 		Packer:        s.Packer,
 		Codec:         s.Codec,
 		respQueueSize: s.respQueueSize,
 		asyncRouter:   s.asyncRouter,
 	})
-	if s.OnSessionCreate != nil {
+	if s.OnSessionCreate != nil { // 函数可以在创建session时执行, 可以为nil
 		s.OnSessionCreate(sess)
 	}
 	close(sess.afterCreateHookC)
 
+	// 开启两个协程, 一个用于读取连接中的数据, 一个用于写入数据到连接中
 	go sess.readInbound(s.router, s.readTimeout) // start reading message packet from connection.
 	go sess.writeOutbound(s.writeTimeout)        // start writing message packet to connection.
 
+	// 等待session关闭, 或者server停止, 会卡在这里等待
 	select {
 	case <-sess.closedC: // wait for session finished.
 	case <-s.stoppedC: // or the server is stopped.
 	}
 
+	// 关闭session的可选回调函数
 	if s.OnSessionClose != nil {
 		s.OnSessionClose(sess)
 	}
